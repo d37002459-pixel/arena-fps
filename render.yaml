@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: arena-fps
+    runtime: docker
+    plan: free
+    healthCheckPath: /
