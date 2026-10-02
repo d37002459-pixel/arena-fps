@@ -15,6 +15,8 @@ var bot_mode := false
 var player_name := "Игрок"
 var server_ip := "127.0.0.1"
 var screenshot_path := ""
+var debug_ads := false
+var drop_height := 0.0  # отладка: --drop=10 появиться выше на 10 м
 var is_web := OS.has_feature("web")
 
 var menu: Control
@@ -46,6 +48,10 @@ func _ready() -> void:
 			join_ip = a.substr(7)
 		elif a.begins_with("--name="):
 			player_name = a.substr(7)
+		elif a == "--ads":
+			debug_ads = true
+		elif a.begins_with("--drop="):
+			drop_height = float(a.substr(7))
 		elif a.begins_with("--screenshot="):
 			screenshot_path = a.substr(13)
 
@@ -137,7 +143,7 @@ func _build_menu() -> void:
 	box.add_child(status_label)
 
 	var help := Label.new()
-	help.text = "WASD — ходьба, Shift — бег, Пробел — прыжок\nЛКМ — огонь, R — перезарядка, Tab — счёт, Esc — пауза"
+	help.text = "WASD — ходьба, Shift — бег, Пробел — прыжок\nЛКМ — огонь, ПКМ — прицел, R — перезарядка, Tab — счёт, Esc — пауза"
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	help.add_theme_color_override("font_color", Color(0.6, 0.62, 0.68))
 	help.add_theme_font_size_override("font_size", 14)
@@ -329,13 +335,15 @@ func _register_player(id: int, pname: String) -> void:
 
 # ---------------------------------------------------------------- счёт и события (сервер)
 
-func server_on_kill(killer: int, victim: int, headshot: bool) -> void:
+func server_on_kill(killer: int, victim: int, headshot: bool, cause: String = "") -> void:
 	if scores.has(victim):
 		scores[victim]["deaths"] += 1
 	var vname := get_player_name(victim)
 	if killer != 0 and killer != victim and scores.has(killer):
 		scores[killer]["kills"] += 1
 		feed.rpc("%s  убил  %s%s" % [get_player_name(killer), vname, "  (в голову)" if headshot else ""])
+	elif cause == "fall":
+		feed.rpc("%s разбился" % vname)
 	else:
 		feed.rpc("%s упал с карты" % vname)
 	_broadcast_scores()

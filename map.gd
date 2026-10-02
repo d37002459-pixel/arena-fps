@@ -55,6 +55,14 @@ static func build(root: Node3D) -> Array:
 	_ramp(root, Vector3(0, 0, 14), Vector3(0, 3, 4), 3.5, blue)
 	_ramp(root, Vector3(0, 0, -14), Vector3(0, 3, -4), 3.5, red)
 
+	# «вышка» на башне: пандус с крыши башни на площадку высотой 6 м (прыгать вниз больно)
+	var nest_c := Color(0.42, 0.4, 0.38)
+	_ramp(root, Vector3(-2.6, 3, 3.2), Vector3(-2.6, 6, -2.0), 1.6, nest_c)
+	_box(root, Vector3(-1.4, 5.8, -3.2), Vector3(3.8, 0.4, 2.6), nest_c)
+	_box(root, Vector3(-1.4, 6.45, -4.4), Vector3(3.8, 0.9, 0.2), stone)
+	_box(root, Vector3(0.4, 6.45, -3.1), Vector3(0.2, 0.9, 2.4), stone)
+	_box(root, Vector3(-3.0, 4.4, -4.2), Vector3(0.3, 2.6, 0.3), wall_c)
+
 	# боковые галереи вдоль стен
 	_box(root, Vector3(30, 2.25, 0), Vector3(5, 0.5, 22), stone)
 	_ramp(root, Vector3(30, 0, -21), Vector3(30, 2.5, -11), 3.0, red)

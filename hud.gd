@@ -17,6 +17,10 @@ var in_game := false
 var death_left := 0.0
 var death_killer := ""
 var hit_t := 0.0
+var cross_lines: Array = []
+var cross_gap := 5.0
+var dmg_dir: Control
+var dmg_t := 0.0
 
 
 func _ready() -> void:
@@ -41,7 +45,7 @@ func _ready() -> void:
 	var top := HBoxContainer.new()
 	_ignore(top)
 	col.add_child(top)
-	hint_label = _label("Esc — пауза   Tab — счёт   R — перезарядка", 15, Color(1, 1, 1, 0.7))
+	hint_label = _label("ПКМ — прицел   R — перезарядка   Tab — счёт   Esc — пауза", 15, Color(1, 1, 1, 0.7))
 	hint_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	top.add_child(hint_label)
 	var sp1 := Control.new()
@@ -78,14 +82,36 @@ func _ready() -> void:
 	_ignore(crosshair)
 	crosshair.custom_minimum_size = Vector2(32, 32)
 	cc.add_child(crosshair)
-	for r in [Rect2(15, 4, 2, 8), Rect2(15, 20, 2, 8), Rect2(4, 15, 8, 2), Rect2(20, 15, 8, 2), Rect2(15, 15, 2, 2)]:
+	for i in 5:
 		var cr := ColorRect.new()
 		_ignore(cr)
-		cr.color = Color(1, 1, 1, 0.9)
-		cr.position = r.position
-		cr.size = r.size
+		cr.color = Color(1, 1, 1, 0.92)
 		crosshair.add_child(cr)
+		cross_lines.append(cr)
 	crosshair.pivot_offset = Vector2(16, 16)
+	_layout_cross()
+
+	# индикатор направления урона
+	var cc5 := CenterContainer.new()
+	_full(cc5)
+	add_child(cc5)
+	dmg_dir = Control.new()
+	_ignore(dmg_dir)
+	dmg_dir.custom_minimum_size = Vector2(0, 0)
+	cc5.add_child(dmg_dir)
+	var arc := ColorRect.new()
+	_ignore(arc)
+	arc.color = Color(1, 0.15, 0.1, 0.85)
+	arc.position = Vector2(-45, -150)
+	arc.size = Vector2(90, 9)
+	dmg_dir.add_child(arc)
+	var tip := ColorRect.new()
+	_ignore(tip)
+	tip.color = Color(1, 0.15, 0.1, 0.85)
+	tip.position = Vector2(-8, -164)
+	tip.size = Vector2(16, 14)
+	dmg_dir.add_child(tip)
+	dmg_dir.modulate.a = 0.0
 
 	# текст по центру (смерть / подключение)
 	var cc2 := CenterContainer.new()
@@ -153,6 +179,9 @@ func _process(delta: float) -> void:
 		if hit_t <= 0.0:
 			crosshair.modulate = Color(1, 1, 1)
 			crosshair.scale = Vector2.ONE
+	if dmg_t > 0.0:
+		dmg_t -= delta
+		dmg_dir.modulate.a = clampf(dmg_t / 0.6, 0.0, 1.0)
 	if death_left > 0.0:
 		death_left -= delta
 		var who := "Тебя убил: %s" % death_killer if death_killer != "" else "Ты погиб"
@@ -163,6 +192,33 @@ func _process(delta: float) -> void:
 
 func set_in_game(v: bool) -> void:
 	in_game = v
+
+
+func _layout_cross() -> void:
+	var g := cross_gap
+	var L := 7.0
+	var rects := [
+		Rect2(15, 16 - g - L, 2, L), Rect2(15, 16 + g, 2, L),
+		Rect2(16 - g - L, 15, L, 2), Rect2(16 + g, 15, L, 2), Rect2(15, 15, 2, 2),
+	]
+	for i in 5:
+		cross_lines[i].position = rects[i].position
+		cross_lines[i].size = rects[i].size
+
+
+## gap — разброс в пикселях; hidden — прячем при прицеливании (там красная точка)
+func set_crosshair(spread_px: float, hidden: bool) -> void:
+	var g := clampf(3.0 + spread_px, 3.0, 80.0)
+	if absf(g - cross_gap) > 0.3:
+		cross_gap = g
+		_layout_cross()
+	crosshair.visible = not hidden
+
+
+func damage_from(angle: float) -> void:
+	dmg_dir.rotation = angle
+	dmg_t = 1.4
+	dmg_dir.modulate.a = 1.0
 
 
 func set_hp(hp: int, damaged: bool) -> void:
@@ -179,6 +235,7 @@ func set_hp(hp: int, damaged: bool) -> void:
 
 func set_ammo(ammo: int, mag: int, reloading: bool) -> void:
 	ammo_label.text = "Перезарядка..." if reloading else "%d / %d" % [ammo, mag]
+	ammo_label.add_theme_color_override("font_color", Color(1, 0.4, 0.3) if ammo <= 8 and not reloading else Color(1, 0.9, 0.6))
 
 
 func show_center(t: String) -> void:
@@ -192,13 +249,12 @@ func hide_center() -> void:
 func show_death(killer: String, t: float) -> void:
 	death_killer = killer
 	death_left = t
-	crosshair.visible = false
+
 
 
 func hide_death() -> void:
 	death_left = 0.0
 	center_label.text = ""
-	crosshair.visible = true
 
 
 func hitmarker(headshot: bool) -> void:
