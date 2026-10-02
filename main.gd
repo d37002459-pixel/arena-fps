@@ -175,7 +175,8 @@ func _set_status(t: String) -> void:
 
 func start_host(play: bool) -> void:
 	var peer := WebSocketMultiplayerPeer.new()
-	var err := peer.create_server(PORT)
+	# выделенный сервер слушает только внутри контейнера (наружу его отдаёт nginx по /ws)
+	var err := peer.create_server(PORT, "127.0.0.1" if is_dedicated else "*")
 	if err != OK:
 		_set_status("Не удалось открыть порт %d — он уже занят?" % PORT)
 		if is_dedicated:
