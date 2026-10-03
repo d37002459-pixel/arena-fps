@@ -1,7 +1,7 @@
 extends RefCounted
 ## Визуальные эффекты стрельбы: трассеры, вспышки, гильзы, искры, дырки от пуль.
 
-const MAX_DECALS := 80
+const MAX_DECALS := 40
 
 static var _mats := {}
 static var _decals: Array = []

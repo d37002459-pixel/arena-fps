@@ -16,10 +16,15 @@ var player_name := "Игрок"
 var server_ip := "127.0.0.1"
 var screenshot_path := ""
 var debug_ads := false
+var debug_view := PackedFloat32Array()  # отладка: --view=x,y,z,поворот,наклон
 var drop_height := 0.0  # отладка: --drop=10 появиться выше на 10 м
 var is_web := OS.has_feature("web")
+var graphics := 2  # 0 — низкая, 1 — средняя, 2 — высокая
 
 var menu: Control
+var menu_world: Node3D
+var menu_cam: Camera3D
+var menu_t := 0.0
 var name_edit: LineEdit
 var ip_edit: LineEdit
 var status_label: Label
@@ -48,6 +53,9 @@ func _ready() -> void:
 			join_ip = a.substr(7)
 		elif a.begins_with("--name="):
 			player_name = a.substr(7)
+		elif a.begins_with("--view="):
+			for v in a.substr(7).split(","):
+				debug_view.append(float(v))
 		elif a == "--ads":
 			debug_ads = true
 		elif a.begins_with("--drop="):
@@ -75,7 +83,7 @@ func _ready() -> void:
 		_build_menu()
 
 	if screenshot_path != "":
-		get_tree().create_timer(3.0).timeout.connect(_take_screenshot)
+		get_tree().create_timer(float(OS.get_environment("SHOT_DELAY")) if OS.get_environment("SHOT_DELAY") != "" else 3.0).timeout.connect(_take_screenshot)
 
 
 # ---------------------------------------------------------------- меню
@@ -87,24 +95,41 @@ func _build_menu() -> void:
 	menu.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(menu)
 
-	var bg := ColorRect.new()
-	bg.color = Color(0.07, 0.08, 0.11)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu.add_child(bg)
+	# живой фон: карта и медленно облетающая камера
+	menu_world = Node3D.new()
+	menu_world.name = "MenuWorld"
+	add_child(menu_world)
+	MapBuilder.new().build(menu_world, true)
+	menu_cam = Camera3D.new()
+	menu_cam.fov = 60
+	menu_cam.far = 400
+	menu_world.add_child(menu_cam)
+	menu_cam.current = true
+	apply_graphics()
+	_update_menu_cam(0.0)
+
+	var shade := ColorRect.new()
+	shade.color = Color(0.03, 0.04, 0.06, 0.62)
+	shade.anchor_bottom = 1.0
+	shade.offset_right = 520
+	menu.add_child(shade)
 
 	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.anchor_bottom = 1.0
+	center.offset_right = 520
 	menu.add_child(center)
 
 	var box := VBoxContainer.new()
-	box.custom_minimum_size = Vector2(400, 0)
+	box.custom_minimum_size = Vector2(380, 0)
 	box.add_theme_constant_override("separation", 10)
 	center.add_child(box)
 
 	var title := Label.new()
 	title.text = "ARENA FPS"
-	title.add_theme_font_size_override("font_size", 56)
-	title.add_theme_color_override("font_color", Color(1.0, 0.75, 0.25))
+	title.add_theme_font_size_override("font_size", 60)
+	title.add_theme_color_override("font_color", Color(1.0, 0.76, 0.28))
+	title.add_theme_constant_override("outline_size", 10)
+	title.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.5))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 
@@ -145,6 +170,8 @@ func _build_menu() -> void:
 	var help := Label.new()
 	help.text = "WASD — ходьба, Shift — бег, Пробел — прыжок\nЛКМ — огонь, ПКМ — прицел, R — перезарядка, Tab — счёт, Esc — пауза"
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	help.custom_minimum_size.x = 380
 	help.add_theme_color_override("font_color", Color(0.6, 0.62, 0.68))
 	help.add_theme_font_size_override("font_size", 14)
 	box.add_child(help)
@@ -239,14 +266,32 @@ func leave_game() -> void:
 	_back_to_menu("")
 
 
+func _process(delta: float) -> void:
+	if menu_cam:
+		menu_t += delta
+		_update_menu_cam(menu_t)
+
+
+func _update_menu_cam(t: float) -> void:
+	var a := t * 0.06 + 0.6
+	menu_cam.position = Vector3(cos(a) * 22.0, 7.5 + sin(t * 0.2) * 0.8, sin(a) * 22.0)
+	menu_cam.look_at(Vector3(0, 3.0, 0), Vector3.UP)
+
+
 func _build_world() -> void:
 	if menu:
 		menu.queue_free()
 		menu = null
+	if menu_world:
+		menu_world.free()
+		menu_world = null
+		menu_cam = null
 	world = Node3D.new()
 	world.name = "World"
 	add_child(world)
-	spawn_points = MapBuilder.build(world)
+	spawn_points = MapBuilder.new().build(world, not is_dedicated)
+	if not is_dedicated:
+		apply_graphics()
 
 	players_root = Node3D.new()
 	players_root.name = "Players"
@@ -395,6 +440,7 @@ func _load_settings() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(SETTINGS_PATH) == OK:
 		player_name = cfg.get_value("player", "name", player_name)
+		graphics = cfg.get_value("video", "graphics", graphics)
 		server_ip = cfg.get_value("player", "ip", server_ip)
 
 
@@ -402,10 +448,49 @@ func _save_settings() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("player", "name", player_name)
 	cfg.set_value("player", "ip", server_ip)
+	cfg.set_value("video", "graphics", graphics)
 	cfg.save(SETTINGS_PATH)
+
+
+func set_graphics(level: int) -> void:
+	graphics = level
+	_save_settings()
+	apply_graphics()
+
+
+## Качество картинки: тени, сглаживание, свечение, разрешение
+func apply_graphics() -> void:
+	var vp := get_viewport()
+	var w: Node3D = world if world else menu_world
+	var sun: DirectionalLight3D = w.get_node_or_null("Sun") if w else null
+	var we: WorldEnvironment = w.get_node_or_null("WorldEnvironment") if w else null
+	match graphics:
+		0:
+			vp.msaa_3d = Viewport.MSAA_DISABLED
+			vp.scaling_3d_scale = 0.75
+			RenderingServer.directional_shadow_atlas_set_size(1024, true)
+		1:
+			vp.msaa_3d = Viewport.MSAA_DISABLED
+			vp.scaling_3d_scale = 1.0
+			RenderingServer.directional_shadow_atlas_set_size(2048, true)
+		_:
+			vp.msaa_3d = Viewport.MSAA_2X
+			vp.scaling_3d_scale = 1.0
+			RenderingServer.directional_shadow_atlas_set_size(4096, true)
+	if sun:
+		sun.shadow_enabled = graphics > 0
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if graphics == 2 else DirectionalLight3D.SHADOW_ORTHOGONAL
+		sun.directional_shadow_max_distance = 70.0 if graphics == 2 else 45.0
+	if we and we.environment:
+		we.environment.glow_enabled = graphics > 0
+		we.environment.fog_enabled = graphics > 0
 
 
 func _take_screenshot() -> void:
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(screenshot_path)
 	print("screenshot saved: ", screenshot_path)
+	print("draw calls: ", RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME),
+		"  objects: ", RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_OBJECTS_IN_FRAME),
+		"  primitives: ", RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME),
+		"  fps: ", Engine.get_frames_per_second())

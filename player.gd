@@ -3,6 +3,8 @@ extends CharacterBody3D
 
 const Sfx := preload("res://sfx.gd")
 const Fx := preload("res://fx.gd")
+const Models := preload("res://models.gd")
+const Soldier := preload("res://soldier.gd")
 
 # движение
 const WALK_SPEED := 6.0
@@ -26,8 +28,9 @@ const HEAD_DAMAGE := 60
 const FALLOFF_START := 25.0      # с этой дистанции урон начинает падать
 const FALLOFF_END := 70.0        # здесь урон — 60%
 # вид от первого лица
-const HIP_POS := Vector3(0.15, -0.17, -0.5)
-const ADS_POS := Vector3(0.0, -0.103, -0.4)
+const HIP_POS := Vector3(0.13, -0.15, -0.38)
+const GUN_SCALE := 0.8
+const ADS_POS := Vector3(0.0, -0.103 * GUN_SCALE, -0.3)
 const HIP_FOV := 80.0
 const ADS_FOV := 52.0
 const MAG_POS := Vector3(0, -0.13, -0.08)
@@ -54,6 +57,9 @@ var eject_port: Node3D
 var mag_node: Node3D
 var red_dot: Node3D
 var body_visuals: Node3D
+var soldier: Node3D
+var last_pos := Vector3.ZERO
+var remote_vel := Vector3.ZERO
 var name_label: Label3D
 var sounds := {}
 
@@ -124,7 +130,6 @@ func _ready() -> void:
 		is_bot = main.bot_mode
 		position.y += main.drop_height
 		camera.current = true
-		body_visuals.visible = false
 		name_label.visible = false
 		if not is_bot and DisplayServer.get_name() != "headless":
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -138,102 +143,88 @@ func _ready() -> void:
 # ---------------------------------------------------------------- модель
 
 func _build_visuals() -> void:
-	var color := Color.from_hsv(fmod(peer_id * 0.618034, 1.0), 0.6, 0.95)
-	var metal := _mat(Color(0.13, 0.14, 0.15), 0.7, 0.4)
-	var polymer := _mat(Color(0.2, 0.21, 0.2), 0.0, 0.85)
-	var glove := _mat(Color(0.1, 0.1, 0.1), 0.0, 0.9)
-	var sleeve := _mat(Color(0.16, 0.17, 0.15), 0.0, 0.95)
-	var accent := _mat(color, 0.2, 0.5)
+	var color := Color.from_hsv(fmod(peer_id * 0.618034, 1.0), 0.65, 0.95)
+	var mine := is_multiplayer_authority()
 
-	# тело (видят другие игроки)
-	body_visuals = Node3D.new()
-	add_child(body_visuals)
-	_part(body_visuals, _capsule(0.4, 1.8), Vector3(0, 0.9, 0), _mat(color, 0.0, 0.6))
-	_part(body_visuals, _box(0.82, 0.22, 0.5), Vector3(0, 1.25, 0), _mat(color.darkened(0.35), 0.0, 0.8))
+	# солдат (видят другие; свой — только тень)
+	soldier = Soldier.new()
+	soldier.color = color
+	soldier.shadow_only = mine
+	add_child(soldier)
+	body_visuals = soldier
 
 	head = Node3D.new()
 	head.position.y = HEAD_HEIGHT
 	add_child(head)
-	var visor := _part(head, _box(0.5, 0.14, 0.14), Vector3(0, 0.02, -0.34), _mat(Color(0.08, 0.09, 0.12), 0.5, 0.2))
 
 	camera = Camera3D.new()
 	camera.fov = HIP_FOV
 	camera.near = 0.03
+	camera.far = 400.0
 	head.add_child(camera)
 
-	# ---- автомат (координаты от центра ствольной коробки, ствол смотрит в -Z)
+	# ---- автомат от первого лица (только у себя)
 	gun = Node3D.new()
 	gun.position = HIP_POS
+	gun.scale = Vector3.ONE * GUN_SCALE
 	head.add_child(gun)
-	_part(gun, _box(0.06, 0.11, 0.34), Vector3(0, 0, 0), metal)                      # ствольная коробка
-	_part(gun, _box(0.036, 0.02, 0.32), Vector3(0, 0.065, -0.02), metal)            # планка
-	for i in 6:                                                                      # насечки планки
-		_part(gun, _box(0.038, 0.005, 0.01), Vector3(0, 0.077, 0.11 - i * 0.045), metal)
-	_part(gun, _box(0.07, 0.085, 0.26), Vector3(0, -0.005, -0.29), polymer)         # цевьё
-	_part(gun, _box(0.072, 0.02, 0.22), Vector3(0, 0.012, -0.29), accent)           # цветная полоса
-	for i in 4:                                                                      # вентиляция цевья
-		_part(gun, _box(0.074, 0.012, 0.03), Vector3(0, -0.025, -0.2 - i * 0.055), metal)
-	_part(gun, _cylinder(0.014, 0.24), Vector3(0, 0.012, -0.52), metal, Vector3(PI / 2, 0, 0))  # ствол
-	_part(gun, _cylinder(0.022, 0.08), Vector3(0, 0.012, -0.66), metal, Vector3(PI / 2, 0, 0))  # ДТК
-	_part(gun, _box(0.008, 0.03, 0.05), Vector3(0, 0.04, -0.62), metal)             # мушка
-	_part(gun, _box(0.004, 0.03, 0.07), Vector3(0.031, 0.022, -0.01), _mat(Color(0.03, 0.03, 0.03)))  # окно экстракции
-	_part(gun, _box(0.03, 0.018, 0.035), Vector3(-0.04, 0.03, 0.06), metal)         # рукоятка затвора
-	_part(gun, _box(0.045, 0.11, 0.055), Vector3(0, -0.1, 0.1), polymer, Vector3(-0.35, 0, 0))   # пистолетная рукоять
-	_part(gun, _box(0.012, 0.035, 0.07), Vector3(0, -0.07, 0.035), metal)           # спуск. скоба
-	var stock := _part(gun, _box(0.05, 0.09, 0.2), Vector3(0, -0.02, 0.27), polymer)             # приклад
-	var butt := _part(gun, _box(0.056, 0.13, 0.03), Vector3(0, -0.035, 0.38), _mat(Color(0.08, 0.08, 0.08), 0.0, 1.0))  # затыльник
-	mag_node = Node3D.new()
-	mag_node.position = MAG_POS
-	mag_node.rotation.x = 0.22
-	gun.add_child(mag_node)
-	_part(mag_node, _box(0.042, 0.18, 0.075), Vector3(0, 0, 0), polymer)            # магазин
-	_part(mag_node, _box(0.046, 0.02, 0.08), Vector3(0, -0.09, 0), metal)
-	# коллиматор: кольцо на стойке + красная точка
-	var ring := MeshInstance3D.new()
-	var tm := TorusMesh.new()
-	tm.inner_radius = 0.019
-	tm.outer_radius = 0.026
-	tm.rings = 24
-	ring.mesh = tm
-	ring.material_override = metal
-	ring.rotation.x = PI / 2
-	ring.position = Vector3(0, 0.103, 0.02)
-	gun.add_child(ring)
-	_part(gun, _box(0.03, 0.014, 0.04), Vector3(0, 0.08, 0.02), metal)
-	red_dot = _part(gun, _sphere(0.0022), Vector3(0, 0.103, 0.02), Fx.unshaded(Color(1, 0.1, 0.1)))
+	gun.visible = mine
+	if mine and not main.is_dedicated:
+		var gm := MeshInstance3D.new()
+		gm.mesh = Models.fp_gun()
+		gm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		gun.add_child(gm)
+		mag_node = Node3D.new()
+		mag_node.position = MAG_POS
+		mag_node.rotation.x = 0.12
+		gun.add_child(mag_node)
+		var mm := MeshInstance3D.new()
+		mm.mesh = Models.fp_mag()
+		mm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mag_node.add_child(mm)
+		var ring := MeshInstance3D.new()
+		var tm := TorusMesh.new()
+		tm.inner_radius = 0.022
+		tm.outer_radius = 0.028
+		tm.rings = 28
+		tm.ring_segments = 8
+		ring.mesh = tm
+		ring.material_override = _mat(Color(0.12, 0.12, 0.13), 0.6, 0.4)
+		ring.rotation.x = PI / 2
+		ring.position = Vector3(0, 0.103, 0.022)
+		ring.scale = Vector3(1, 2.2, 1)
+		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		gun.add_child(ring)
+		red_dot = _part(gun, _sphere(0.0022), Vector3(0, 0.103, 0.02), Fx.unshaded(Color(1, 0.1, 0.1)))
+		red_dot.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	else:
+		mag_node = Node3D.new()
+		gun.add_child(mag_node)
+		red_dot = Node3D.new()
+		gun.add_child(red_dot)
 	muzzle = Node3D.new()
 	muzzle.position = Vector3(0, 0.012, -0.71)
 	gun.add_child(muzzle)
 	eject_port = Node3D.new()
 	eject_port.position = Vector3(0.04, 0.025, -0.01)
 	gun.add_child(eject_port)
-	# руки
-	_part(gun, _box(0.075, 0.06, 0.1), Vector3(-0.01, -0.06, -0.32), glove)                         # левая кисть
-	var l_arm := _part(gun, _box(0.095, 0.095, 0.34), Vector3(-0.1, -0.13, -0.15), sleeve, Vector3(0.25, 0.45, 0))  # левое предплечье
-	_part(l_arm, _box(0.1, 0.1, 0.03), Vector3(0, 0, -0.15), accent)                                 # манжета цвета игрока
-	_part(gun, _box(0.07, 0.07, 0.09), Vector3(0.0, -0.09, 0.1), glove, Vector3(-0.35, 0, 0))        # правая кисть
-	var r_arm := _part(gun, _box(0.085, 0.085, 0.36), Vector3(0.06, -0.15, 0.3), sleeve, Vector3(0.45, -0.25, 0)) # правое предплечье
 
 	name_label = Label3D.new()
 	name_label.text = player_name
 	name_label.font = preload("res://fonts/Inter-SemiBold.otf")
-	name_label.position.y = 2.2
+	name_label.position.y = 2.15
 	name_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	name_label.pixel_size = 0.004
-	name_label.font_size = 56
+	name_label.pixel_size = 0.0035
+	name_label.font_size = 52
 	name_label.outline_size = 12
-	name_label.modulate = color.lightened(0.3)
+	name_label.modulate = color.lightened(0.35)
+	name_label.no_depth_test = false
 	add_child(name_label)
 
-	if is_multiplayer_authority():
-		visor.visible = false
-		# эти части у камеры только загораживают обзор
-		stock.visible = false
-		butt.visible = false
-		r_arm.visible = false
-		# своё оружие не отбрасывает тень на мир и не «залазит» в стены визуально
-		for n in gun.find_children("*", "GeometryInstance3D", true, false):
-			n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+## Откуда вылетает вспышка/трассер: у себя — дуло в руках, у других — дуло автомата солдата
+func fx_muzzle() -> Node3D:
+	return muzzle if is_multiplayer_authority() else soldier.muzzle
 
 
 func _part(parent: Node3D, mesh: Mesh, pos: Vector3, mat: Material, rot := Vector3.ZERO) -> MeshInstance3D:
@@ -244,28 +235,6 @@ func _part(parent: Node3D, mesh: Mesh, pos: Vector3, mat: Material, rot := Vecto
 	mi.rotation = rot
 	parent.add_child(mi)
 	return mi
-
-
-static func _box(x: float, y: float, z: float) -> BoxMesh:
-	var m := BoxMesh.new()
-	m.size = Vector3(x, y, z)
-	return m
-
-
-static func _cylinder(r: float, h: float) -> CylinderMesh:
-	var m := CylinderMesh.new()
-	m.top_radius = r
-	m.bottom_radius = r
-	m.height = h
-	m.radial_segments = 12
-	return m
-
-
-static func _capsule(r: float, h: float) -> CapsuleMesh:
-	var m := CapsuleMesh.new()
-	m.radius = r
-	m.height = h
-	return m
 
 
 static func _sphere(r: float) -> SphereMesh:
@@ -354,9 +323,28 @@ func _remote_process(delta: float) -> void:
 		global_position = global_position.lerp(sync_pos, k)
 	rotation.y = lerp_angle(rotation.y, sync_yaw, k)
 	head.rotation.x = lerp(head.rotation.x, sync_pitch, k)
+	# скорость для анимации ног считаем по смещению
+	if delta > 0.0:
+		var v := (global_position - last_pos) / delta
+		remote_vel = remote_vel.lerp(v, clampf(delta * 8.0, 0.0, 1.0))
+	last_pos = global_position
+	if not main.is_dedicated:
+		var on_floor := absf(remote_vel.y) < 1.0
+		soldier.animate(delta, global_transform.basis.inverse() * remote_vel, on_floor, head.rotation.x)
 
 
 func _local_process(delta: float) -> void:
+	if main.debug_view.size() >= 5:
+		var v: PackedFloat32Array = main.debug_view
+		global_position = Vector3(v[0], v[1], v[2])
+		rotation.y = deg_to_rad(v[3])
+		pitch = deg_to_rad(v[4])
+		head.rotation.x = pitch
+		velocity = Vector3.ZERO
+		ads = main.debug_ads
+		_publish()
+		_animate_viewmodel(delta)
+		return
 	fire_cd -= delta
 	bloom = move_toward(bloom, 0.0, delta * 0.06)
 	if reload_left > 0.0:
@@ -371,6 +359,7 @@ func _local_process(delta: float) -> void:
 		ads = false
 		_publish()
 		_animate_viewmodel(delta)
+		soldier.animate(delta, Vector3.ZERO, true, pitch)
 		return
 
 	var input_dir := Vector2.ZERO
@@ -429,6 +418,7 @@ func _local_process(delta: float) -> void:
 
 	_publish()
 	_animate_viewmodel(delta)
+	soldier.animate(delta, global_transform.basis.inverse() * velocity, is_on_floor(), pitch)
 
 
 func _on_landed(speed: float) -> void:
@@ -564,8 +554,9 @@ func _shot_fx(end: Vector3, normal: Vector3, hit_player: bool, did_hit: bool) ->
 	if main.is_dedicated or main.world == null:
 		return
 	_snd("shot", 0.0 if is_multiplayer_authority() else 2.0, 0.05)
-	Fx.muzzle_flash(muzzle)
-	Fx.tracer(main.world, muzzle.global_position, end)
+	var mz := fx_muzzle()
+	Fx.muzzle_flash(mz)
+	Fx.tracer(main.world, mz.global_position, end)
 	if did_hit:
 		Fx.impact(main.world, end, normal, hit_player)
 
@@ -742,8 +733,9 @@ func cl_die(attacker: int) -> void:
 	if multiplayer.get_remote_sender_id() != 1:
 		return
 	alive = false
-	visible = false
 	collision_layer = 0
+	soldier.die()
+	name_label.visible = false
 	if is_multiplayer_authority():
 		velocity = Vector3.ZERO
 		reload_left = 0.0
@@ -757,8 +749,9 @@ func cl_respawn(pos: Vector3) -> void:
 		return
 	alive = true
 	hp = MAX_HP
-	visible = true
 	collision_layer = 2
+	soldier.revive()
+	name_label.visible = not is_multiplayer_authority()
 	fell_pending = false
 	global_position = pos
 	sync_pos = pos
